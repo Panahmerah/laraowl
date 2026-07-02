@@ -3,7 +3,7 @@
     "private": true,
     "type": "module",
     "scripts": {
-        "build": "vite build",
+        "build": "cross-env NODE_TLS_REJECT_UNAUTHORIZED=0 vite build",
         "build:ssr": "vite build && vite build --ssr",
         "dev": "vite",
         "format": "prettier --write resources/",
@@ -20,6 +20,7 @@
         "@types/prismjs": "^1.26.6",
         "@types/react-syntax-highlighter": "^15.5.13",
         "babel-plugin-react-compiler": "^1.0.0",
+        "cross-env": "^10.1.0",
         "eslint": "^9.17.0",
         "eslint-config-prettier": "^10.0.1",
         "eslint-import-resolver-typescript": "^4.4.4",
