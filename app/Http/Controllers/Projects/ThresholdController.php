@@ -25,6 +25,8 @@ class ThresholdController extends Controller
 
     public function destroy(Team $current_team, Project $project, Threshold $threshold)
     {
+        $this->ensureBelongsToProject($project, $threshold);
+
         $threshold->delete();
 
         return back()->with('success', 'Threshold deleted successfully.');

@@ -4,10 +4,12 @@ namespace App\Console\Commands;
 
 use App\Models\Heartbeat;
 use App\Models\Project;
+use App\Rules\PublicUrl;
 use App\Services\AlertService;
 use App\Services\IntegrationService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Validator;
 
 class CheckProjectUptime extends Command
 {
@@ -63,6 +65,14 @@ class CheckProjectUptime extends Command
 
     protected function checkUptime(Project $project, AlertService $alertService)
     {
+        $validator = Validator::make(['url' => $project->url], ['url' => ['url', new PublicUrl]]);
+
+        if ($validator->fails()) {
+            $this->warn("Skipping uptime check for {$project->name}: URL is not a valid public address.");
+
+            return;
+        }
+
         $start = microtime(true);
         $status = 'up';
         $statusCode = 0;
