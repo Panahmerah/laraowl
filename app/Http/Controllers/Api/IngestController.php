@@ -5,8 +5,10 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Jobs\ProcessIngestedRecords;
 use App\Models\Project;
+use App\Rules\PublicUrl;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Validator;
 
 class IngestController extends Controller
 {
@@ -29,7 +31,14 @@ class IngestController extends Controller
 
         // Auto-update project URL if not set
         if ($request->has('app_url') && ! $project->url) {
-            $project->update(['url' => $request->input('app_url')]);
+            $validator = Validator::make(
+                ['app_url' => $request->input('app_url')],
+                ['app_url' => ['url', new PublicUrl]]
+            );
+
+            if ($validator->passes()) {
+                $project->update(['url' => $request->input('app_url')]);
+            }
         }
 
         ProcessIngestedRecords::dispatch($project, $records);

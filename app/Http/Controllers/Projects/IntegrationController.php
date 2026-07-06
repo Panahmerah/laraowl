@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Integration;
 use App\Models\Project;
 use App\Models\Team;
+use App\Rules\PublicUrl;
 use App\Services\IntegrationService;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
@@ -29,6 +30,8 @@ class IntegrationController extends Controller
             'name' => ['required', 'string', 'max:255'],
             'type' => ['required', 'string', 'in:slack,discord,telegram,webhook,email'],
             'data' => ['required', 'array'],
+            'data.webhook_url' => ['sometimes', 'url', new PublicUrl],
+            'data.url' => ['sometimes', 'url', new PublicUrl],
         ]);
 
         $integration = $project->integrations()->create([
@@ -49,10 +52,14 @@ class IntegrationController extends Controller
 
     public function update(Request $request, Team $current_team, Project $project, Integration $integration)
     {
+        $this->ensureBelongsToProject($project, $integration);
+
         $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'is_enabled' => ['required', 'boolean'],
             'data' => ['required', 'array'],
+            'data.webhook_url' => ['sometimes', 'url', new PublicUrl],
+            'data.url' => ['sometimes', 'url', new PublicUrl],
         ]);
 
         $integration->update([
@@ -66,6 +73,8 @@ class IntegrationController extends Controller
 
     public function destroy(Team $current_team, Project $project, Integration $integration)
     {
+        $this->ensureBelongsToProject($project, $integration);
+
         $integration->delete();
 
         return back()->with('success', 'Integration removed successfully.');
@@ -73,6 +82,8 @@ class IntegrationController extends Controller
 
     public function test(Request $request, Team $current_team, Project $project, Integration $integration)
     {
+        $this->ensureBelongsToProject($project, $integration);
+
         try {
             app(IntegrationService::class)->send(
                 $integration,

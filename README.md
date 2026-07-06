@@ -168,7 +168,7 @@ This project comes with a custom `Dockerfile` and `docker-compose.yml` for easy 
 First copy the production environment file:
 
 ```bash
-cp .env.prod .env
+cp .env.prod.example .env
 ```
 
 Then update the following variables in `.env`:
@@ -182,6 +182,8 @@ REVERB_APP_SECRET=xxxxxxxxxxxxxxxxxxxxx
 ```
 
 The docker-compose.yaml file already has the correct service names for `db`, `redis`, and `reverb`. You only need to change the hostname and database credentials if you want to customize them.
+
+Also replace every `changeme` placeholder (`DB_PASSWORD`, `REDIS_PASSWORD`, `MAIL_HOST`/`MAIL_USERNAME`/`MAIL_PASSWORD`) with real values — the mail ones matter for password resets, 2FA codes, and issue-alert emails to actually send.
 
 #### Starting Production server
 Use the following command to start the server in production mode:

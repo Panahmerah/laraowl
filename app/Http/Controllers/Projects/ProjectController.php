@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Projects;
 use App\Http\Controllers\Controller;
 use App\Models\Project;
 use App\Models\Team;
+use App\Rules\PublicUrl;
 use App\Services\CloudflareService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
@@ -15,7 +16,7 @@ class ProjectController extends Controller
     {
         $request->validate([
             'name' => ['required', 'string', 'max:255'],
-            'url' => ['nullable', 'url', 'max:255'],
+            'url' => ['nullable', 'url', 'max:255', new PublicUrl],
             'uptime_check_interval' => ['nullable', 'integer', 'min:30'],
             'retention_days' => ['nullable', 'integer', 'min:0', 'max:365'],
             'logo' => ['nullable', 'image', 'max:2048'],
@@ -83,7 +84,7 @@ class ProjectController extends Controller
     {
         $request->validate([
             'name' => ['required', 'string', 'max:255'],
-            'url' => ['nullable', 'url', 'max:255'],
+            'url' => ['nullable', 'url', 'max:255', new PublicUrl],
             'logo' => ['nullable', 'image', 'max:2048'],
         ]);
 
