@@ -236,6 +236,41 @@ test('users list scope filter switches between authenticated, guest, and all', f
         ->and($all['users']->total())->toBe(2);
 });
 
+test('user history status filter switches between error, ok, and all records', function () {
+    $project = Project::factory()->create();
+
+    $project->records()->create([
+        'type' => 'request',
+        'fingerprint' => 'ok-history-request',
+        'payload' => ['t' => 'request', 'user' => 741, 'status_code' => 200],
+        'created_at' => now(),
+    ]);
+
+    $project->records()->create([
+        'type' => 'request',
+        'fingerprint' => 'error-history-request',
+        'payload' => ['t' => 'request', 'user' => 741, 'status_code' => 500],
+        'created_at' => now(),
+    ]);
+
+    $project->records()->create([
+        'type' => 'exception',
+        'fingerprint' => 'exception-history-741',
+        'payload' => ['t' => 'exception', 'class' => 'RuntimeException', 'message' => 'boom', 'user' => 741],
+        'created_at' => now(),
+    ]);
+
+    $hash = md5('741');
+
+    $all = app(RecordService::class)->getUserHistory($project, $hash, '24h', null, null, 'all');
+    $errors = app(RecordService::class)->getUserHistory($project, $hash, '24h', null, null, 'error');
+    $ok = app(RecordService::class)->getUserHistory($project, $hash, '24h', null, null, 'ok');
+
+    expect($all['records']->total())->toBe(3)
+        ->and($errors['records']->total())->toBe(2)
+        ->and($ok['records']->total())->toBe(1);
+});
+
 test('synthetic guest sessions are excluded from dashboard active and impacted users', function () {
     $project = Project::factory()->create();
 

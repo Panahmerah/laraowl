@@ -8,6 +8,8 @@ import {
     Layers,
     ChevronDown,
     ChevronRight,
+    FileCode,
+    AlertTriangle,
 } from 'lucide-react';
 import { useState } from 'react';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
@@ -39,6 +41,62 @@ export default function RecordShow({
         }
 
         return 'text-emerald-500 border-emerald-500/20 bg-emerald-500/5';
+    };
+
+    // Trace frames are stored as a JSON-encoded string; each frame's `file`
+    // packs "path:line" together and `code` is a map of line number -> source line.
+    const parseTraceFrames = (
+        raw: unknown,
+    ): {
+        path: string;
+        line?: number;
+        source: string;
+        code: [number, string][];
+    }[] => {
+        let frames: any[] = [];
+
+        if (Array.isArray(raw)) {
+            frames = raw;
+        } else if (typeof raw === 'string' && raw.trim()) {
+            try {
+                const parsed = JSON.parse(raw);
+                frames = Array.isArray(parsed) ? parsed : [];
+            } catch {
+                frames = [];
+            }
+        }
+
+        return frames.map((frame) => {
+            const rawFile: string = frame.file || '';
+            const separatorIndex = rawFile.lastIndexOf(':');
+            const path =
+                separatorIndex === -1
+                    ? rawFile
+                    : rawFile.slice(0, separatorIndex);
+            const parsedLine =
+                separatorIndex === -1
+                    ? NaN
+                    : Number(rawFile.slice(separatorIndex + 1));
+
+            const code: [number, string][] = frame.code
+                ? Object.entries(frame.code)
+                      .map(
+                          ([lineNumber, text]) =>
+                              [Number(lineNumber), text as string] as [
+                                  number,
+                                  string,
+                              ],
+                      )
+                      .sort((a, b) => a[0] - b[0])
+                : [];
+
+            return {
+                path: path || 'unknown',
+                line: Number.isNaN(parsedLine) ? undefined : parsedLine,
+                source: frame.source || '',
+                code,
+            };
+        });
     };
 
     const queries = relatedRecords.filter((r) => r.type === 'query');
@@ -89,22 +147,28 @@ export default function RecordShow({
     const isJob = ['job-attempt', 'queued-job'].includes(record.type);
     const isCommand = ['command', 'scheduled-task'].includes(record.type);
     const isQuery = record.type === 'query';
+    const isException = record.type === 'exception';
+    const stackTrace = parseTraceFrames(payload.trace);
 
-    const title = isJob
-        ? payload.name || payload.job || 'Job Execution'
-        : isCommand
-          ? payload.command || 'Command Execution'
-          : isQuery
-            ? 'Database Query'
-            : payload.route_path || record.type.toUpperCase();
-
-    const subTitle = isRequest
-        ? payload.url || `https://${payload.server}${payload.route_path}`
+    const title = isException
+        ? payload.class || 'Exception'
         : isJob
-          ? `${payload.connection || 'default'} @ ${payload.queue || 'default'}`
+          ? payload.name || payload.job || 'Job Execution'
           : isCommand
-            ? payload.arguments || 'No arguments'
-            : '';
+            ? payload.command || 'Command Execution'
+            : isQuery
+              ? 'Database Query'
+              : payload.route_path || record.type.toUpperCase();
+
+    const subTitle = isException
+        ? payload.message || ''
+        : isRequest
+          ? payload.url || `https://${payload.server}${payload.route_path}`
+          : isJob
+            ? `${payload.connection || 'default'} @ ${payload.queue || 'default'}`
+            : isCommand
+              ? payload.arguments || 'No arguments'
+              : '';
 
     return (
         <>
@@ -123,10 +187,16 @@ export default function RecordShow({
 
                     <Badge
                         variant="outline"
-                        className="rounded border-border bg-muted px-3 py-1 text-xs font-bold text-foreground uppercase"
+                        className={
+                            isException
+                                ? 'rounded border-red-500/20 bg-red-500/10 px-3 py-1 text-xs font-bold text-red-500 uppercase'
+                                : 'rounded border-border bg-muted px-3 py-1 text-xs font-bold text-foreground uppercase'
+                        }
                     >
-                        {payload.method ||
-                            record.type.replace('-', ' ').toUpperCase()}
+                        {isException
+                            ? 'Exception'
+                            : payload.method ||
+                              record.type.replace('-', ' ').toUpperCase()}
                     </Badge>
                 </div>
             </div>
@@ -135,13 +205,24 @@ export default function RecordShow({
                 {/* Main Info Card */}
                 <Card className="border-border bg-card p-8 shadow-2xl">
                     <div className="space-y-6">
-                        <div className="flex items-center gap-3 font-mono text-sm text-emerald-400">
-                            <Globe className="h-4 w-4" />
-                            <span className="break-all">
-                                {payload.url ||
-                                    `https://${payload.server}${payload.route_path}`}
-                            </span>
-                        </div>
+                        {isException ? (
+                            <div className="flex items-center gap-3 font-mono text-sm text-red-400">
+                                <AlertTriangle className="h-4 w-4" />
+                                <span className="break-all">
+                                    {payload.file
+                                        ? `${payload.file}:${payload.line}`
+                                        : 'No file/line captured'}
+                                </span>
+                            </div>
+                        ) : (
+                            <div className="flex items-center gap-3 font-mono text-sm text-emerald-400">
+                                <Globe className="h-4 w-4" />
+                                <span className="break-all">
+                                    {payload.url ||
+                                        `https://${payload.server}${payload.route_path}`}
+                                </span>
+                            </div>
+                        )}
 
                         <div className="grid grid-cols-1 gap-x-12 gap-y-4 md:grid-cols-2">
                             <div className="flex items-center justify-between border-b border-border py-2">
@@ -229,6 +310,50 @@ export default function RecordShow({
                                 </div>
                             )}
 
+                            {isException && record.issue && (
+                                <>
+                                    <div className="flex items-center justify-between border-b border-border py-2">
+                                        <span className="text-[10px] font-bold tracking-widest text-muted-foreground uppercase">
+                                            Issue Status
+                                        </span>
+                                        <Badge
+                                            className={
+                                                record.issue.status ===
+                                                'resolved'
+                                                    ? 'bg-emerald-500/10 text-emerald-500'
+                                                    : 'bg-red-500/10 text-red-500'
+                                            }
+                                        >
+                                            {record.issue.status}
+                                        </Badge>
+                                    </div>
+                                    <div className="flex items-center justify-between border-b border-border py-2">
+                                        <span className="text-[10px] font-bold tracking-widest text-muted-foreground uppercase">
+                                            Priority
+                                        </span>
+                                        <span className="font-mono text-sm text-foreground/90">
+                                            {record.issue.priority}
+                                        </span>
+                                    </div>
+                                    <div className="flex items-center justify-between border-b border-border py-2">
+                                        <span className="text-[10px] font-bold tracking-widest text-muted-foreground uppercase">
+                                            Occurrences
+                                        </span>
+                                        <span className="font-mono text-sm text-foreground/90">
+                                            {record.issue.occurrences_count}
+                                        </span>
+                                    </div>
+                                    <div className="flex items-center justify-between border-b border-border py-2">
+                                        <span className="text-[10px] font-bold tracking-widest text-muted-foreground uppercase">
+                                            Users Affected
+                                        </span>
+                                        <span className="font-mono text-sm text-foreground/90">
+                                            {record.issue.users_count}
+                                        </span>
+                                    </div>
+                                </>
+                            )}
+
                             <div className="flex items-center justify-between border-b border-border py-2">
                                 <span className="text-[10px] font-bold tracking-widest text-muted-foreground uppercase">
                                     Server
@@ -310,6 +435,89 @@ export default function RecordShow({
                         </div>
                     </div>
                 </Card>
+
+                {/* Stack Trace Card */}
+                {isException && (
+                    <Card className="border-border bg-card p-8 shadow-2xl">
+                        <div className="mb-6 flex items-center gap-2">
+                            <FileCode className="h-4 w-4 text-red-500" />
+                            <h3 className="text-xs font-bold text-foreground uppercase">
+                                Stack Trace
+                            </h3>
+                        </div>
+
+                        {stackTrace.length > 0 ? (
+                            <div className="space-y-4">
+                                {stackTrace.slice(0, 20).map((frame, i) => (
+                                    <Card
+                                        key={i}
+                                        className="overflow-hidden border-border bg-card/50 shadow-sm"
+                                    >
+                                        <div className="flex items-center justify-between border-b border-border/50 bg-muted/30 px-4 py-2">
+                                            <div className="flex items-center gap-2 truncate">
+                                                <span className="text-[10px] font-black text-red-500/60">
+                                                    #{i}
+                                                </span>
+                                                <code className="truncate text-[10px] font-bold text-foreground">
+                                                    {frame.path}
+                                                    {frame.line !== undefined
+                                                        ? `:${frame.line}`
+                                                        : ''}
+                                                </code>
+                                            </div>
+                                            {frame.source && (
+                                                <span className="truncate text-[9px] font-black text-muted-foreground uppercase">
+                                                    {frame.source}
+                                                </span>
+                                            )}
+                                        </div>
+                                        {frame.code.length > 0 && (
+                                            <SyntaxHighlighter
+                                                language="php"
+                                                style={vscDarkPlus}
+                                                customStyle={{
+                                                    margin: 0,
+                                                    borderRadius: 0,
+                                                    fontSize: '11px',
+                                                    padding: '1rem',
+                                                }}
+                                                showLineNumbers={true}
+                                                startingLineNumber={
+                                                    frame.code[0][0]
+                                                }
+                                                wrapLines={true}
+                                                lineProps={(lineNum) => {
+                                                    const style: any = {
+                                                        display: 'block',
+                                                    };
+
+                                                    if (
+                                                        lineNum === frame.line
+                                                    ) {
+                                                        style.backgroundColor =
+                                                            'rgba(239, 68, 68, 0.1)';
+                                                        style.borderLeft =
+                                                            '2px solid rgb(239, 68, 68)';
+                                                    }
+
+                                                    return { style };
+                                                }}
+                                            >
+                                                {frame.code
+                                                    .map(([, text]) => text)
+                                                    .join('\n')}
+                                            </SyntaxHighlighter>
+                                        )}
+                                    </Card>
+                                ))}
+                            </div>
+                        ) : (
+                            <p className="text-xs text-muted-foreground italic">
+                                No stack trace captured for this exception.
+                            </p>
+                        )}
+                    </Card>
+                )}
 
                 {/* Headers Card */}
                 <Card className="border-border bg-card shadow-2xl">

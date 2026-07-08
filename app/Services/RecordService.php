@@ -701,14 +701,23 @@ class RecordService
     /**
      * Get specific user history with additional stats
      */
-    public function getUserHistory(Project $project, string $hash, ?string $period = null, ?string $from = null, ?string $to = null): array
+    public function getUserHistory(Project $project, string $hash, ?string $period = null, ?string $from = null, ?string $to = null, string $status = 'all'): array
     {
         $userHash = "MD5(COALESCE({$this->jsonText('user')}, 'Anonymous'))";
         $statusCode = $this->jsonNumeric('status_code');
+        $status = in_array($status, ['all', 'error', 'ok'], true) ? $status : 'all';
 
-        $records = $project->records()
+        $recordsQuery = $project->records()
             ->whereRaw("{$userHash} = ?", [$hash])
-            ->forPeriod($period, $from, $to)
+            ->forPeriod($period, $from, $to);
+
+        if ($status === 'error') {
+            $recordsQuery->whereRaw("(type = 'exception' OR {$statusCode} >= 400)");
+        } elseif ($status === 'ok') {
+            $recordsQuery->whereRaw("(type != 'exception' AND ({$statusCode} < 400 OR {$statusCode} IS NULL))");
+        }
+
+        $records = $recordsQuery
             ->latest()
             ->paginate(50)
             ->withQueryString();
@@ -738,6 +747,7 @@ class RecordService
             'user_id' => $user_id,
             'user_identifier' => $user_name, // legacy support
             'records' => $records,
+            'status' => $status,
             'stats' => tap($project->records()->forPeriod($period, $from, $to)
                 ->whereRaw("{$userHash} = ?", [$hash])
                 ->select([
