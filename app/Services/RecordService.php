@@ -725,6 +725,45 @@ class RecordService
     }
 
     /**
+     * Find the record that caused this one to execute (the HTTP request that
+     * dispatched a job, or the job attempt a mail/query/log ran inside of).
+     * The client SDK stamps every record with `execution_source` (request/job/
+     * command) and `execution_id`, which points at either the originating
+     * request's `trace_id` or the containing job-attempt's `attempt_id`.
+     */
+    public function getExecutionSourceRecord(Project $project, Record $record): ?Record
+    {
+        $executionId = $record->payload['execution_id'] ?? null;
+        $source = $record->payload['execution_source'] ?? null;
+
+        if (! $executionId || ! $source) {
+            return null;
+        }
+
+        if ($source === 'job') {
+            $attemptIdColumn = $this->jsonText('attempt_id');
+
+            return $project->records()
+                ->where('type', 'job-attempt')
+                ->whereRaw("{$attemptIdColumn} = ?", [$executionId])
+                ->latest()
+                ->first();
+        }
+
+        if ($source === 'request') {
+            $traceIdColumn = $this->jsonText('trace_id');
+
+            return $project->records()
+                ->where('type', 'request')
+                ->whereRaw("{$traceIdColumn} = ?", [$executionId])
+                ->latest()
+                ->first();
+        }
+
+        return null;
+    }
+
+    /**
      * Get specific user history with additional stats
      */
     public function getUserHistory(Project $project, string $hash, ?string $period = null, ?string $from = null, ?string $to = null, string $status = 'all'): array

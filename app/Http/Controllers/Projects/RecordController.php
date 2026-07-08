@@ -272,9 +272,12 @@ class RecordController extends Controller
             ? $this->recordService->getLinkedExceptionRecord($project, $record)
             : null;
 
+        $executionSource = $this->recordService->getExecutionSourceRecord($project, $record);
+
         return Inertia::render('projects/records/show', [
             'record' => $record,
             'linked_exception' => $linkedException,
+            'execution_source_record' => $executionSource,
         ]);
     }
 }

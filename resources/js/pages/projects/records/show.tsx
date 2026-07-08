@@ -1,4 +1,4 @@
-import { Head, usePage } from '@inertiajs/react';
+import { Head, Link, usePage } from '@inertiajs/react';
 import {
     Activity,
     Globe,
@@ -8,6 +8,7 @@ import {
     Layers,
     ChevronDown,
     ChevronRight,
+    ChevronsRight,
     FileCode,
     AlertTriangle,
 } from 'lucide-react';
@@ -17,19 +18,34 @@ import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import AppLayout from '@/layouts/app-layout';
+import { show as showRecord } from '@/routes/records';
 
 export default function RecordShow({
     record,
     relatedRecords = [],
     highlight_record_id,
     linked_exception,
+    execution_source_record,
 }: {
     record: any;
     relatedRecords?: any[];
     highlight_record_id?: number;
     linked_exception?: any;
+    execution_source_record?: any;
 }) {
-    usePage();
+    const { props }: any = usePage();
+    const teamSlug = props.current_team?.slug || props.currentTeam?.slug;
+    const projectSlug =
+        props.current_project?.slug || props.currentProject?.slug;
+    const recordHref = (recordId: number) =>
+        showRecord.url(
+            {
+                current_team: teamSlug,
+                project: projectSlug,
+                record: recordId,
+            },
+            { mergeQuery: {} },
+        );
     const payload = record.payload || {};
     const [expandedHeaders, setExpandedHeaders] = useState(false);
 
@@ -149,6 +165,7 @@ export default function RecordShow({
     const isJob = ['job-attempt', 'queued-job'].includes(record.type);
     const isCommand = ['command', 'scheduled-task'].includes(record.type);
     const isQuery = record.type === 'query';
+    const isMail = record.type === 'mail';
     const isException = record.type === 'exception';
     const isFailedRequest = isRequest && Number(payload.status_code) >= 400;
     const errorPayload = isException
@@ -161,23 +178,27 @@ export default function RecordShow({
 
     const title = isException
         ? payload.class || 'Exception'
-        : isJob
-          ? payload.name || payload.job || 'Job Execution'
-          : isCommand
-            ? payload.command || 'Command Execution'
-            : isQuery
-              ? 'Database Query'
-              : payload.route_path || record.type.toUpperCase();
+        : isMail
+          ? payload.subject || payload.class || 'Mail'
+          : isJob
+            ? payload.name || payload.job || 'Job Execution'
+            : isCommand
+              ? payload.command || 'Command Execution'
+              : isQuery
+                ? 'Database Query'
+                : payload.route_path || record.type.toUpperCase();
 
     const subTitle = isException
         ? payload.message || ''
-        : isRequest
-          ? payload.url || `https://${payload.server}${payload.route_path}`
-          : isJob
-            ? `${payload.connection || 'default'} @ ${payload.queue || 'default'}`
-            : isCommand
-              ? payload.arguments || 'No arguments'
-              : '';
+        : isMail
+          ? payload.class || ''
+          : isRequest
+            ? payload.url || `https://${payload.server}${payload.route_path}`
+            : isJob
+              ? `${payload.connection || 'default'} @ ${payload.queue || 'default'}`
+              : isCommand
+                ? payload.arguments || 'No arguments'
+                : '';
 
     return (
         <>
@@ -197,15 +218,21 @@ export default function RecordShow({
                     <Badge
                         variant="outline"
                         className={
-                            isException
+                            isException || (isMail && payload.failed)
                                 ? 'rounded border-red-500/20 bg-red-500/10 px-3 py-1 text-xs font-bold text-red-500 uppercase'
-                                : 'rounded border-border bg-muted px-3 py-1 text-xs font-bold text-foreground uppercase'
+                                : isMail
+                                  ? 'rounded border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-xs font-bold text-emerald-500 uppercase'
+                                  : 'rounded border-border bg-muted px-3 py-1 text-xs font-bold text-foreground uppercase'
                         }
                     >
                         {isException
                             ? 'Exception'
-                            : payload.method ||
-                              record.type.replace('-', ' ').toUpperCase()}
+                            : isMail
+                              ? payload.failed
+                                  ? 'Failed'
+                                  : 'Sent'
+                              : payload.method ||
+                                record.type.replace('-', ' ').toUpperCase()}
                     </Badge>
                 </div>
             </div>
@@ -221,6 +248,13 @@ export default function RecordShow({
                                     {payload.file
                                         ? `${payload.file}:${payload.line}`
                                         : 'No file/line captured'}
+                                </span>
+                            </div>
+                        ) : isMail ? (
+                            <div className="flex items-center gap-3 font-mono text-sm text-indigo-400">
+                                <Mail className="h-4 w-4" />
+                                <span className="break-all">
+                                    {payload.class || 'Unknown Mailable'}
                                 </span>
                             </div>
                         ) : (
@@ -319,6 +353,48 @@ export default function RecordShow({
                                 </div>
                             )}
 
+                            {isMail && (
+                                <>
+                                    <div className="flex items-center justify-between border-b border-border py-2">
+                                        <span className="text-[10px] font-bold tracking-widest text-muted-foreground uppercase">
+                                            Mailer
+                                        </span>
+                                        <span className="font-mono text-sm text-foreground/90">
+                                            {payload.mailer || 'Unknown'}
+                                        </span>
+                                    </div>
+                                    <div className="flex items-center justify-between border-b border-border py-2">
+                                        <span className="text-[10px] font-bold tracking-widest text-muted-foreground uppercase">
+                                            Recipients
+                                        </span>
+                                        <span className="font-mono text-sm text-foreground/90">
+                                            {payload.to || 0} to,{' '}
+                                            {payload.cc || 0} cc,{' '}
+                                            {payload.bcc || 0} bcc
+                                        </span>
+                                    </div>
+                                    <div className="flex items-center justify-between border-b border-border py-2">
+                                        <span className="text-[10px] font-bold tracking-widest text-muted-foreground uppercase">
+                                            Attachments
+                                        </span>
+                                        <span className="font-mono text-sm text-foreground/90">
+                                            {payload.attachments || 0}
+                                        </span>
+                                    </div>
+                                    <div className="flex items-center justify-between border-b border-border py-2">
+                                        <span className="text-[10px] font-bold tracking-widest text-muted-foreground uppercase">
+                                            Send Duration
+                                        </span>
+                                        <span className="font-mono text-sm text-foreground/90">
+                                            {(
+                                                (payload.duration || 0) / 1000
+                                            ).toFixed(2)}{' '}
+                                            ms
+                                        </span>
+                                    </div>
+                                </>
+                            )}
+
                             {isException && record.issue && (
                                 <>
                                     <div className="flex items-center justify-between border-b border-border py-2">
@@ -400,6 +476,44 @@ export default function RecordShow({
                                 </span>
                             </div>
                         </div>
+
+                        {payload.execution_source && (
+                            <div className="pt-6">
+                                <h3 className="mb-4 text-xs font-bold text-foreground uppercase">
+                                    Triggered By
+                                </h3>
+                                <div className="flex items-center justify-between border-b border-border py-2">
+                                    <span className="text-[10px] font-bold tracking-widest text-muted-foreground uppercase">
+                                        Source
+                                    </span>
+                                    <div className="flex items-center gap-2 font-mono text-sm text-foreground/90">
+                                        <ChevronsRight className="h-3.5 w-3.5 text-muted-foreground" />
+                                        <Badge
+                                            variant="outline"
+                                            className="border-border bg-muted text-[9px] font-bold uppercase"
+                                        >
+                                            {payload.execution_source}
+                                        </Badge>
+                                        {execution_source_record ? (
+                                            <Link
+                                                href={recordHref(
+                                                    execution_source_record.id,
+                                                )}
+                                                className="truncate text-blue-400 hover:underline"
+                                            >
+                                                {payload.execution_preview ||
+                                                    `Record #${execution_source_record.id}`}
+                                            </Link>
+                                        ) : (
+                                            <span className="truncate">
+                                                {payload.execution_preview ||
+                                                    'Unknown'}
+                                            </span>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
 
                         <div className="pt-6">
                             <div className="mb-4 flex items-center justify-between">

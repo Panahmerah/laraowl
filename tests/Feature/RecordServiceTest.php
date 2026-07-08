@@ -97,3 +97,72 @@ it('returns null when a request has no matching trace_id exception', function ()
 
     expect($linked)->toBeNull();
 });
+
+it('resolves the job-attempt that a mail record was sent inside of', function () {
+    $project = Project::factory()->create();
+
+    $jobAttempt = Record::create([
+        'project_id' => $project->id,
+        'type' => 'job-attempt',
+        'fingerprint' => 'send-mail-job',
+        'payload' => [
+            'name' => 'App\\Jobs\\SendWelcomeEmailJob',
+            'attempt_id' => 'attempt-xyz-789',
+            'status' => 'processed',
+        ],
+        'created_at' => now(),
+    ]);
+
+    $mail = Record::create([
+        'project_id' => $project->id,
+        'type' => 'mail',
+        'fingerprint' => 'welcome-mail',
+        'payload' => [
+            'class' => 'App\\Mail\\WelcomeMail',
+            'subject' => 'Welcome!',
+            'execution_id' => 'attempt-xyz-789',
+            'execution_source' => 'job',
+            'execution_preview' => 'App\\Jobs\\SendWelcomeEmailJob',
+        ],
+        'created_at' => now(),
+    ]);
+
+    $resolved = app(RecordService::class)->getExecutionSourceRecord($project, $mail);
+
+    expect($resolved)->not->toBeNull()
+        ->and($resolved->id)->toBe($jobAttempt->id);
+});
+
+it('resolves the request that directly dispatched a queued job', function () {
+    $project = Project::factory()->create();
+
+    $request = Record::create([
+        'project_id' => $project->id,
+        'type' => 'request',
+        'fingerprint' => 'dispatching-request',
+        'payload' => [
+            'route_path' => '/checkout',
+            'status_code' => 200,
+            'trace_id' => 'trace-root-1',
+        ],
+        'created_at' => now(),
+    ]);
+
+    $queuedJob = Record::create([
+        'project_id' => $project->id,
+        'type' => 'queued-job',
+        'fingerprint' => 'queued-job-1',
+        'payload' => [
+            'name' => 'App\\Jobs\\ProcessOrderJob',
+            'execution_id' => 'trace-root-1',
+            'execution_source' => 'request',
+            'execution_preview' => 'POST /checkout',
+        ],
+        'created_at' => now(),
+    ]);
+
+    $resolved = app(RecordService::class)->getExecutionSourceRecord($project, $queuedJob);
+
+    expect($resolved)->not->toBeNull()
+        ->and($resolved->id)->toBe($request->id);
+});
