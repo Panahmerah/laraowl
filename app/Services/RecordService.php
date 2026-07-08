@@ -760,6 +760,16 @@ class RecordService
                 ->first();
         }
 
+        if ($source === 'command') {
+            $traceIdColumn = $this->jsonText('trace_id');
+
+            return $project->records()
+                ->whereIn('type', ['command', 'scheduled-task'])
+                ->whereRaw("{$traceIdColumn} = ?", [$executionId])
+                ->latest()
+                ->first();
+        }
+
         return null;
     }
 

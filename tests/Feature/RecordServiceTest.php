@@ -166,3 +166,37 @@ it('resolves the request that directly dispatched a queued job', function () {
     expect($resolved)->not->toBeNull()
         ->and($resolved->id)->toBe($request->id);
 });
+
+it('resolves the artisan command that sent a mail directly', function () {
+    $project = Project::factory()->create();
+
+    $command = Record::create([
+        'project_id' => $project->id,
+        'type' => 'command',
+        'fingerprint' => 'digest-command',
+        'payload' => [
+            'command' => 'digest:send --ansi',
+            'trace_id' => 'trace-command-1',
+        ],
+        'created_at' => now(),
+    ]);
+
+    $mail = Record::create([
+        'project_id' => $project->id,
+        'type' => 'mail',
+        'fingerprint' => 'digest-mail',
+        'payload' => [
+            'class' => 'App\\Mail\\DigestMail',
+            'subject' => 'Weekly Digest',
+            'execution_id' => 'trace-command-1',
+            'execution_source' => 'command',
+            'execution_preview' => 'digest:send',
+        ],
+        'created_at' => now(),
+    ]);
+
+    $resolved = app(RecordService::class)->getExecutionSourceRecord($project, $mail);
+
+    expect($resolved)->not->toBeNull()
+        ->and($resolved->id)->toBe($command->id);
+});
