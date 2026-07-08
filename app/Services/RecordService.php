@@ -696,6 +696,7 @@ class RecordService
     public function getUserHistory(Project $project, string $hash, ?string $period = null, ?string $from = null, ?string $to = null): array
     {
         $userHash = "MD5(COALESCE({$this->jsonText('user')}, 'Anonymous'))";
+        $statusCode = $this->jsonNumeric('status_code');
 
         $records = $project->records()
             ->whereRaw("{$userHash} = ?", [$hash])
@@ -735,9 +736,13 @@ class RecordService
                     DB::raw('COUNT(*) as total'),
                     DB::raw('MIN(created_at) as first_seen'),
                     DB::raw('MAX(created_at) as last_seen'),
+                    DB::raw("SUM(CASE WHEN type = 'exception' OR {$statusCode} >= 400 THEN 1 ELSE 0 END) as error_count"),
+                    DB::raw("SUM(CASE WHEN type != 'exception' AND ({$statusCode} < 400 OR {$statusCode} IS NULL) THEN 1 ELSE 0 END) as ok_count"),
                 ])->first(), function ($stats) {
                     $stats->first_seen = $this->toUtcIso($stats->first_seen);
                     $stats->last_seen = $this->toUtcIso($stats->last_seen);
+                    $stats->error_count = (int) $stats->error_count;
+                    $stats->ok_count = (int) $stats->ok_count;
                 }),
         ];
     }

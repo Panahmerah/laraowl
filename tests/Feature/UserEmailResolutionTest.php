@@ -144,3 +144,41 @@ test('user stats, exception stats, and user history report last_seen as UTC ISO 
         ->and($history['stats']->first_seen)->toMatch('/Z$/')
         ->and($history['stats']->last_seen)->toMatch('/Z$/');
 });
+
+test('user history stats correctly count exceptions and failed status codes as errors', function () {
+    $project = Project::factory()->create();
+
+    $project->records()->create([
+        'type' => 'request',
+        'fingerprint' => 'ok-request',
+        'payload' => ['t' => 'request', 'user' => 654, 'status_code' => 200],
+        'created_at' => now(),
+    ]);
+
+    $project->records()->create([
+        'type' => 'request',
+        'fingerprint' => 'not-found-request',
+        'payload' => ['t' => 'request', 'user' => 654, 'status_code' => 404],
+        'created_at' => now(),
+    ]);
+
+    $project->records()->create([
+        'type' => 'request',
+        'fingerprint' => 'server-error-request',
+        'payload' => ['t' => 'request', 'user' => 654, 'status_code' => 500],
+        'created_at' => now(),
+    ]);
+
+    $project->records()->create([
+        'type' => 'exception',
+        'fingerprint' => 'exception-user-654',
+        'payload' => ['t' => 'exception', 'class' => 'RuntimeException', 'message' => 'boom', 'user' => 654],
+        'created_at' => now(),
+    ]);
+
+    $history = app(RecordService::class)->getUserHistory($project, md5('654'), '24h');
+
+    expect($history['stats']->total)->toBe(4)
+        ->and($history['stats']->error_count)->toBe(3)
+        ->and($history['stats']->ok_count)->toBe(1);
+});
