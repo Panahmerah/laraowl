@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import { BarChart, Bar, ResponsiveContainer, Tooltip, XAxis } from 'recharts';
 import { EmptyState } from '@/components/empty-state';
 import { Pagination } from '@/components/pagination';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import {
     Table,
@@ -18,6 +19,12 @@ import { monitoringQuery } from '@/lib/monitoring-query';
 import { formatCompactNumber } from '@/lib/utils';
 import { show as showUser } from '@/routes/users';
 
+const scopeFilters = [
+    { label: 'Authenticated', value: 'authenticated' },
+    { label: 'Guest', value: 'guest' },
+    { label: 'All', value: 'all' },
+];
+
 export default function UsersIndex({
     users,
     timeSeries = [],
@@ -25,6 +32,7 @@ export default function UsersIndex({
     from,
     to,
     overview,
+    scope = 'authenticated',
 }: {
     users: any;
     timeSeries: any;
@@ -32,8 +40,22 @@ export default function UsersIndex({
     from?: string | null;
     to?: string | null;
     overview: any;
+    scope?: string;
 }) {
     const periodLabel = period?.toUpperCase() || '24H';
+
+    const handleScopeChange = (value: string) => {
+        const searchParams = new URLSearchParams(window.location.search);
+        searchParams.set('scope', value);
+        searchParams.delete('page');
+
+        router.visit(window.location.pathname + '?' + searchParams.toString(), {
+            preserveState: true,
+            preserveScroll: true,
+            replace: true,
+        });
+    };
+
     const { props }: any = usePage();
     const teamSlug = props.current_team?.slug || props.currentTeam?.slug;
     const currentProject = props.current_project || props.currentProject;
@@ -278,6 +300,25 @@ export default function UsersIndex({
                                 {formatCompactNumber(users.total || 0)} Users
                             </span>
                         </div>
+                        <div className="flex rounded-md border border-border bg-muted p-1">
+                            {scopeFilters.map((filter) => (
+                                <Button
+                                    key={filter.value}
+                                    variant={
+                                        scope === filter.value
+                                            ? 'secondary'
+                                            : 'ghost'
+                                    }
+                                    size="sm"
+                                    className={`h-7 px-3 text-[10px] font-bold tracking-tight uppercase ${scope === filter.value ? 'bg-primary text-primary-foreground shadow-lg hover:bg-primary/90' : 'text-muted-foreground hover:text-foreground'}`}
+                                    onClick={() =>
+                                        handleScopeChange(filter.value)
+                                    }
+                                >
+                                    {filter.label}
+                                </Button>
+                            ))}
+                        </div>
                     </div>
 
                     <div className="overflow-hidden rounded-lg border border-border bg-card">
@@ -405,7 +446,11 @@ export default function UsersIndex({
                             <div className="p-12">
                                 <EmptyState
                                     title="No Users Tracked"
-                                    description="We haven't captured any authenticated user activity for this project yet."
+                                    description={
+                                        scope === 'guest'
+                                            ? "We haven't captured any guest session activity for this project yet."
+                                            : "We haven't captured any authenticated user activity for this project yet."
+                                    }
                                     icon={Users}
                                 />
                             </div>

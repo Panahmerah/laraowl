@@ -72,7 +72,9 @@ class RecordController extends Controller
 
     protected function renderUsersIndex(Project $project, string $period, ?string $from, ?string $to): Response
     {
-        return $this->renderWithStats('projects/users', $this->recordService->getUserStats($project, $period, $from, $to), $project, $period, $from, $to);
+        $scope = request()->query('scope', 'authenticated');
+
+        return $this->renderWithStats('projects/users', $this->recordService->getUserStats($project, $period, $from, $to, $scope), $project, $period, $from, $to);
     }
 
     protected function renderJobsIndex(Project $project, string $period, ?string $from, ?string $to): Response
