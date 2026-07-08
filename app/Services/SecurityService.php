@@ -4,7 +4,10 @@ namespace App\Services;
 
 use App\Models\Project;
 use App\Models\Record;
+use App\Rules\PublicUrl;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 
 class SecurityService
@@ -17,68 +20,122 @@ class SecurityService
 
     /**
      * Advanced threat patterns with assigned risk scores.
+     *
+     * Each type is a list of confidence-tiered groups (OWASP CRS-style paranoia
+     * levels): strong groups are unambiguous attack syntax and score high,
+     * weak groups are structurally-common tokens that also occur in benign
+     * traffic and score low so a single incidental match can't alone cross
+     * the medium-risk threshold. `sources` restricts a group to specific
+     * request parts (e.g. sensitive-file probes only make sense as a URL
+     * path, not as incidental text inside a request body).
      */
     protected array $threatPatterns = [
         'sqli' => [
-            'patterns' => [
-                "/'\s*OR\s*['\"]?1['\"]?\s*=\s*['\"]?1/",
-                "/UNION\s+SELECT/i",
-                "/DROP\s+TABLE/i",
-                "/SLEEP\s*\(/i",
-                '/INFORMATION_SCHEMA/i',
-                "/GROUP\s+BY\s+\d+/i",
-                "/ORDER\s+BY\s+\d+/i",
+            [
+                'patterns' => [
+                    "/'\s*OR\s*['\"]?1['\"]?\s*=\s*['\"]?1/",
+                    "/UNION\s+SELECT/i",
+                    "/DROP\s+TABLE/i",
+                    "/SLEEP\s*\(/i",
+                    '/INFORMATION_SCHEMA/i',
+                ],
+                'score' => 40,
             ],
-            'score' => 40,
+            [
+                // Weak: also appears in legitimate sort/report query params.
+                'patterns' => [
+                    "/GROUP\s+BY\s+\d+/i",
+                    "/ORDER\s+BY\s+\d+/i",
+                ],
+                'score' => 15,
+            ],
         ],
         'xss' => [
-            'patterns' => [
-                '/<script/i',
-                '/javascript:/i',
-                "/onerror\s*=/i",
-                "/onload\s*=/i",
-                '/<iframe/i',
-                "/document\.cookie/i",
-                "/alert\s*\(/i",
-                "/prompt\s*\(/i",
-                "/string\.fromcharcode/i",
+            [
+                'patterns' => [
+                    '/<script/i',
+                    '/javascript:/i',
+                    "/onerror\s*=/i",
+                    "/onload\s*=/i",
+                    '/<iframe/i',
+                    "/string\.fromcharcode/i",
+                ],
+                'score' => 30,
             ],
-            'score' => 30,
+            [
+                // Weak: single JS identifiers, common in error messages/support text.
+                'patterns' => [
+                    "/document\.cookie/i",
+                    "/alert\s*\(/i",
+                    "/prompt\s*\(/i",
+                ],
+                'score' => 15,
+            ],
         ],
         'path_traversal' => [
-            'patterns' => [
-                "/\.\.\//",
-                "/\/etc\/passwd/",
-                "/\.env/",
-                "/config\/database\.php/",
-                "/\.git\//",
-                "/\.htaccess/",
-                "/proc\/self/i",
+            [
+                'patterns' => [
+                    "/\.\.\//",
+                    "/\/etc\/passwd/",
+                    "/proc\/self/i",
+                ],
+                'score' => 50,
             ],
-            'score' => 50,
+        ],
+        'sensitive_file_probe' => [
+            [
+                // Only meaningful as the request path itself — matching this
+                // against a body/query blob just means someone typed ".env"
+                // in a support message, not that they're probing for it.
+                'patterns' => [
+                    "/\.env(?:$|[^a-z0-9_.-])/i",
+                    "/\.git\//i",
+                    "/\.htaccess/i",
+                    "/config\/database\.php/i",
+                ],
+                'score' => 45,
+                'sources' => ['url'],
+            ],
         ],
         'command_injection' => [
-            'patterns' => [
-                "/;\s*cat\s+/i",
-                "/\|\s*grep\s+/i",
-                "/&&\s*ls/i",
-                "/system\s*\(/i",
-                "/exec\s*\(/i",
-                "/passthru\s*\(/i",
-                "/shell_exec\s*\(/i",
-                "/curl\s+.*\|\s*sh/i",
+            [
+                'patterns' => [
+                    "/;\s*cat\s+/i",
+                    "/\|\s*grep\s+/i",
+                    "/&&\s*ls/i",
+                    "/system\s*\(/i",
+                    "/exec\s*\(/i",
+                    "/passthru\s*\(/i",
+                    "/shell_exec\s*\(/i",
+                    "/curl\s+.*\|\s*sh/i",
+                ],
+                'score' => 60,
             ],
-            'score' => 60,
         ],
         'lfi_rfi' => [
-            'patterns' => [
-                "/php:\/\/filter/i",
-                "/https?:\/\/.*\.(txt|php|exe)/i",
-                "/expect:\/\//i",
+            [
+                'patterns' => [
+                    "/php:\/\/filter/i",
+                    "/https?:\/\/.*\.(txt|php|exe)/i",
+                    "/expect:\/\//i",
+                ],
+                'score' => 50,
             ],
-            'score' => 50,
         ],
     ];
+
+    /**
+     * Unambiguous offensive-security tooling — safe to flag on sight.
+     */
+    protected array $knownAttackTools = ['sqlmap', 'nmap', 'nikto', 'dirbuster', 'gobuster'];
+
+    /**
+     * Generic HTTP client libraries used by countless legitimate integrations,
+     * webhooks, and health checks. Their presence alone isn't a threat signal,
+     * so they score low (informational) rather than triggering a "suspicious
+     * tool" alert like the tools above.
+     */
+    protected array $genericHttpClients = ['python-requests', 'go-http-client', 'okhttp', 'node-fetch'];
 
     /**
      * Analyze a record for potential security threats.
@@ -102,29 +159,58 @@ class SecurityService
             'headers' => is_array($payload['headers'] ?? null) ? json_encode($payload['headers']) : ($payload['headers'] ?? ''),
         ];
 
+        // Maps a decoded pseudo-source (e.g. "body_decoded") back to the base
+        // source it came from ("body"), so a match can be scored as an
+        // evasion attempt only when it shows up decoded but not in the raw input.
+        $decodedSources = [];
+
         $preparedInputs = [];
         foreach ($rawInputs as $key => $val) {
             $decoded = urldecode($val);
             $preparedInputs[$key] = $decoded;
 
-            // Check for potential Base64/Hex obfuscation
+            // Long base64/hex-looking strings (JWTs, API keys, session tokens)
+            // are routine in real traffic, so decoding alone is not scored —
+            // only content that decodes into an actual threat pattern below is.
             if ($this->isObfuscated($decoded)) {
-                $preparedInputs[$key.'_decoded'] = $this->deobfuscate($decoded);
-                $totalScore += 10; // Penalty for obfuscated payload
+                $decodedKey = $key.'_decoded';
+                $preparedInputs[$decodedKey] = $this->deobfuscate($decoded);
+                $decodedSources[$decodedKey] = $key;
             }
         }
 
-        // 2. Pattern Matching
+        // 2. Pattern Matching (confidence-tiered, source-scoped)
         foreach ($preparedInputs as $source => $value) {
-            foreach ($this->threatPatterns as $type => $config) {
-                foreach ($config['patterns'] as $pattern) {
-                    if (preg_match($pattern, $value)) {
+            $baseSource = $decodedSources[$source] ?? $source;
+            $isEvasion = isset($decodedSources[$source]);
+
+            foreach ($this->threatPatterns as $type => $groups) {
+                foreach ($groups as $group) {
+                    $allowedSources = $group['sources'] ?? null;
+
+                    if ($allowedSources !== null && ! in_array($baseSource, $allowedSources, true)) {
+                        continue;
+                    }
+
+                    foreach ($group['patterns'] as $pattern) {
+                        if (! preg_match($pattern, $value)) {
+                            continue;
+                        }
+
+                        $score = $group['score'];
+
+                        // Evasion bonus: threat only surfaced after decoding,
+                        // meaning the attacker deliberately obfuscated it.
+                        if ($isEvasion) {
+                            $score += 15;
+                        }
+
                         $detectedThreats[] = [
                             'type' => $type,
                             'source' => $source,
                             'pattern' => $pattern,
                         ];
-                        $totalScore += $config['score'];
+                        $totalScore += $score;
                     }
                 }
             }
@@ -168,14 +254,26 @@ class SecurityService
         }
 
         // B. User-Agent Anomaly
-        $ua = $payload['headers']['user-agent'] ?? '';
-        $suspiciousBots = ['sqlmap', 'nmap', 'nikto', 'dirbuster', 'gobuster', 'python-requests'];
-        foreach ($suspiciousBots as $bot) {
-            if (Str::contains(strtolower($ua), $bot)) {
+        $ua = strtolower($payload['headers']['user-agent'] ?? '');
+
+        foreach ($this->knownAttackTools as $tool) {
+            if (Str::contains($ua, $tool)) {
                 $anomalies[] = [
                     'type' => 'anomaly',
-                    'detail' => "Suspicious Security Tool Detected: $bot",
+                    'detail' => "Suspicious Security Tool Detected: $tool",
                     'score' => 40,
+                ];
+            }
+        }
+
+        // Generic scripting clients are routine for webhooks/integrations/health
+        // checks — informational weight only, not enough alone to raise an alert.
+        foreach ($this->genericHttpClients as $client) {
+            if (Str::contains($ua, $client)) {
+                $anomalies[] = [
+                    'type' => 'anomaly',
+                    'detail' => "Automated HTTP Client Detected: $client",
+                    'score' => 5,
                 ];
             }
         }
@@ -188,32 +286,59 @@ class SecurityService
      */
     protected function isObfuscated(string $value): bool
     {
-        // Check for long Base64-like strings or hex sequences
-        return preg_match('/[a-zA-Z0-9+\/]{20,}={0,2}/', $value) ||
-               preg_match('/(?:[0-9a-fA-F]{2}\s*){8,}/', $value);
+        return $this->extractObfuscatedCandidates($value) !== [];
     }
 
     /**
-     * Attempt to de-obfuscate a string.
+     * Pull out the individual base64/hex-looking substrings from a larger
+     * blob (e.g. a JSON request body). Decoding the whole blob directly
+     * never works — real payloads are wrapped in JSON punctuation that
+     * breaks strict base64/hex decoding — so each candidate must be
+     * extracted and decoded on its own.
+     *
+     * @return array<int, string>
+     */
+    protected function extractObfuscatedCandidates(string $value): array
+    {
+        $candidates = [];
+
+        if (preg_match_all('/[a-zA-Z0-9+\/]{20,}={0,2}/', $value, $matches)) {
+            $candidates = array_merge($candidates, $matches[0]);
+        }
+
+        if (preg_match_all('/(?:[0-9a-fA-F]{2}){8,}/', $value, $matches)) {
+            $candidates = array_merge($candidates, $matches[0]);
+        }
+
+        return $candidates;
+    }
+
+    /**
+     * Attempt to de-obfuscate a string by decoding each candidate substring
+     * independently and concatenating whatever successfully decodes to
+     * printable text.
      */
     protected function deobfuscate(string $value): string
     {
-        // Try Base64
-        $decoded = base64_decode($value, true);
-        if ($decoded !== false && ctype_print($decoded)) {
-            return 'BASE64_DECODED: '.$decoded;
-        }
+        $decodedParts = [];
 
-        // Try Hex
-        $hex = preg_replace('/\s+/', '', $value);
-        if (ctype_xdigit($hex) && strlen($hex) > 10) {
-            $bin = @hex2bin($hex);
-            if ($bin !== false && ctype_print($bin)) {
-                return 'HEX_DECODED: '.$bin;
+        foreach ($this->extractObfuscatedCandidates($value) as $candidate) {
+            $decoded = base64_decode($candidate, true);
+            if ($decoded !== false && ctype_print($decoded)) {
+                $decodedParts[] = $decoded;
+
+                continue;
+            }
+
+            if (ctype_xdigit($candidate) && strlen($candidate) > 10) {
+                $bin = @hex2bin($candidate);
+                if ($bin !== false && ctype_print($bin)) {
+                    $decodedParts[] = $bin;
+                }
             }
         }
 
-        return $value;
+        return implode(' ', $decodedParts);
     }
 
     /**
@@ -337,10 +462,10 @@ class SecurityService
             ];
         }
 
-        if ($publicFiles['directory_listing_enabled'] ?? false) {
+        if (($publicFiles['directory_listing_enabled'] ?? false) && $this->verifyDirectoryListing($project)) {
             $securityIssues[] = [
                 'type' => 'configuration',
-                'details' => 'Directory listing might be enabled in public folder',
+                'details' => 'Directory listing is enabled in public folder',
                 'priority' => 'medium',
             ];
         }
@@ -365,6 +490,42 @@ class SecurityService
         $settings['security_env'] = $env;
         $settings['last_audit_at'] = now()->toDateTimeString();
         $project->update(['settings' => $settings]);
+    }
+
+    /**
+     * The client's directory-listing check is a local heuristic (e.g. inspecting
+     * .htaccess) and can't see the real webserver config, especially on Nginx/
+     * Cloud hosts where .htaccess is ignored — so it over-reports. Confirm by
+     * actually requesting the public folder and looking for a real listing
+     * page before raising the issue.
+     */
+    protected function verifyDirectoryListing(Project $project): bool
+    {
+        if (empty($project->url)) {
+            return false;
+        }
+
+        $validator = Validator::make(['url' => $project->url], ['url' => ['url', new PublicUrl]]);
+
+        if ($validator->fails()) {
+            return false;
+        }
+
+        $base = rtrim($project->url, '/');
+
+        foreach (['/build/', '/vendor/', '/storage/'] as $path) {
+            try {
+                $response = Http::timeout(5)->get($base.$path);
+            } catch (\Throwable $e) {
+                continue;
+            }
+
+            if ($response->status() === 200 && Str::contains($response->body(), 'Index of', ignoreCase: true)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     protected function compareHashes(array $old, array $new): array
