@@ -103,7 +103,6 @@ class RecordService
         $statusCode = $this->jsonNumeric('status_code');
         $duration = $this->jsonNumeric('duration');
         $status = $this->jsonText('status');
-        $user = $this->jsonValue('user');
         $userDistinct = $this->jsonDistinct('user');
         $userId = "COALESCE({$this->jsonText('user.id')}, {$this->jsonText('user')}, 'Anonymous')";
         $userIdentifier = "COALESCE({$this->jsonText('user.name')}, {$this->jsonText('user_name')}, {$this->jsonText('user')}, 'Anonymous')";
@@ -131,7 +130,7 @@ class RecordService
             ])->first();
 
         $impactedUsers = (clone $records)->ofType('exception')
-            ->whereRaw("{$user} IS NOT NULL")
+            ->whereRaw($this->authenticatedUserFilter())
             ->select([
                 DB::raw("{$userId} as user_id"),
                 DB::raw("{$userIdentifier} as user_identifier"),
@@ -145,7 +144,7 @@ class RecordService
             ->get();
 
         $activeUsers = (clone $records)->ofType('request')
-            ->whereRaw("{$user} IS NOT NULL")
+            ->whereRaw($this->authenticatedUserFilter())
             ->select([
                 DB::raw("{$userId} as user_id"),
                 DB::raw("{$userIdentifier} as user_identifier"),
@@ -185,8 +184,8 @@ class RecordService
             ],
             'impacted_users' => $impactedUsers,
             'active_users' => $activeUsers,
-            'auth_users_count' => (clone $records)->ofType('request')->whereRaw("{$user} IS NOT NULL")->distinct(DB::raw($userDistinct))->count(),
-            'guest_users_count' => (clone $records)->ofType('request')->whereRaw("{$user} IS NULL")->count(),
+            'auth_users_count' => (clone $records)->ofType('request')->whereRaw($this->authenticatedUserFilter())->distinct(DB::raw($userDistinct))->count(),
+            'guest_users_count' => (clone $records)->ofType('request')->whereRaw('NOT ('.$this->authenticatedUserFilter().')')->count(),
             'period' => $period,
             'uptime_status' => [
                 'current' => $project->last_uptime_status ?? 'unknown',
@@ -199,22 +198,30 @@ class RecordService
     /**
      * Aggregate User Data
      */
-    public function getUserStats(Project $project, ?string $period = null, ?string $from = null, ?string $to = null): array
+    public function getUserStats(Project $project, ?string $period = null, ?string $from = null, ?string $to = null, string $scope = 'authenticated'): array
     {
         $records = $project->records()->forPeriod($period, $from, $to);
-        $user = $this->jsonValue('user');
         $userDistinct = $this->jsonDistinct('user');
         $statusCode = $this->jsonNumeric('status_code');
         $userHash = "MD5(COALESCE({$this->jsonText('user')}, 'Anonymous'))";
+        $scope = in_array($scope, ['authenticated', 'guest', 'all'], true) ? $scope : 'authenticated';
 
-        $authCount = (clone $records)->ofType('request')->whereRaw("{$user} IS NOT NULL")->distinct(DB::raw($userDistinct))->count();
-        $guestCount = (clone $records)->ofType('request')->whereRaw("{$user} IS NULL")->count();
-        $totalAuthRequests = (clone $records)->ofType('request')->whereRaw("{$user} IS NOT NULL")->count();
+        $authCount = (clone $records)->ofType('request')->whereRaw($this->authenticatedUserFilter())->distinct(DB::raw($userDistinct))->count();
+        $guestCount = (clone $records)->ofType('request')->whereRaw('NOT ('.$this->authenticatedUserFilter().')')->count();
+        $totalAuthRequests = (clone $records)->ofType('request')->whereRaw($this->authenticatedUserFilter())->count();
+
+        $usersQuery = $project->records()->forPeriod($period, $from, $to);
+
+        if ($scope === 'authenticated') {
+            $usersQuery->whereRaw($this->authenticatedUserFilter());
+        } elseif ($scope === 'guest') {
+            $usersQuery->whereRaw('NOT ('.$this->authenticatedUserFilter().')')->whereRaw("{$this->jsonValue('user')} IS NOT NULL");
+        } else {
+            $usersQuery->whereRaw("{$this->jsonValue('user')} IS NOT NULL");
+        }
 
         return [
-            'users' => $this->enrichUserPaginator($project, $project->records()
-                ->whereRaw("{$user} IS NOT NULL")
-                ->forPeriod($period, $from, $to)
+            'users' => $this->enrichUserPaginator($project, $usersQuery
                 ->select([
                     DB::raw("COALESCE(
                         {$this->jsonText('user.name')},
@@ -247,6 +254,7 @@ class RecordService
                 'guest_requests' => $guestCount,
                 'auth_requests' => $totalAuthRequests,
             ],
+            'scope' => $scope,
         ];
     }
 
@@ -1138,6 +1146,25 @@ class RecordService
             'records' => $records,
             'period' => $period,
         ];
+    }
+
+    /**
+     * SQL predicate for "this record belongs to a real authenticated user."
+     * The client SDK assigns synthetic identifiers like "guest_7cf6295f61e4"
+     * to anonymous visitors so it can still group their session activity —
+     * those aren't null, so a plain `user IS NOT NULL` check treats every
+     * guest session as an authenticated user and floods user-facing lists
+     * with them. Exclude the guest_ prefix explicitly.
+     */
+    private function authenticatedUserFilter(): string
+    {
+        $user = $this->jsonValue('user');
+        $userText = $this->jsonText('user');
+
+        // Plain LIKE (no ESCAPE clause) to stay portable across MySQL/Postgres —
+        // the "_" wildcard happens to match our literal separator too, so
+        // "guest_%" still only matches the "guest_<id>" convention in practice.
+        return "{$user} IS NOT NULL AND {$userText} NOT LIKE 'guest_%'";
     }
 
     private function isPgsql(): bool

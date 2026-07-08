@@ -182,3 +182,81 @@ test('user history stats correctly count exceptions and failed status codes as e
         ->and($history['stats']->error_count)->toBe(3)
         ->and($history['stats']->ok_count)->toBe(1);
 });
+
+test('synthetic guest session identifiers are excluded from authenticated user stats', function () {
+    $project = Project::factory()->create();
+
+    $project->records()->create([
+        'type' => 'request',
+        'fingerprint' => 'guest-request',
+        'payload' => ['t' => 'request', 'user' => 'guest_7cf6295f61e4', 'status_code' => 200],
+        'created_at' => now(),
+    ]);
+
+    $project->records()->create([
+        'type' => 'request',
+        'fingerprint' => 'real-user-request',
+        'payload' => ['t' => 'request', 'user' => 999, 'status_code' => 200],
+        'created_at' => now(),
+    ]);
+
+    $stats = app(RecordService::class)->getUserStats($project, '24h');
+
+    expect($stats['users']->total())->toBe(1)
+        ->and((string) $stats['users']->items()[0]->user_id)->toBe('999')
+        ->and($stats['overview']['auth_users'])->toBe(1)
+        ->and($stats['overview']['guest_requests'])->toBe(1);
+});
+
+test('users list scope filter switches between authenticated, guest, and all', function () {
+    $project = Project::factory()->create();
+
+    $project->records()->create([
+        'type' => 'request',
+        'fingerprint' => 'guest-scope-request',
+        'payload' => ['t' => 'request', 'user' => 'guest_deadbeef0000', 'status_code' => 200],
+        'created_at' => now(),
+    ]);
+
+    $project->records()->create([
+        'type' => 'request',
+        'fingerprint' => 'real-user-scope-request',
+        'payload' => ['t' => 'request', 'user' => 42, 'status_code' => 200],
+        'created_at' => now(),
+    ]);
+
+    $authenticated = app(RecordService::class)->getUserStats($project, '24h', null, null, 'authenticated');
+    $guest = app(RecordService::class)->getUserStats($project, '24h', null, null, 'guest');
+    $all = app(RecordService::class)->getUserStats($project, '24h', null, null, 'all');
+
+    expect($authenticated['users']->total())->toBe(1)
+        ->and((string) $authenticated['users']->items()[0]->user_id)->toBe('42')
+        ->and($guest['users']->total())->toBe(1)
+        ->and((string) $guest['users']->items()[0]->user_id)->toBe('guest_deadbeef0000')
+        ->and($all['users']->total())->toBe(2);
+});
+
+test('synthetic guest sessions are excluded from dashboard active and impacted users', function () {
+    $project = Project::factory()->create();
+
+    $project->records()->create([
+        'type' => 'request',
+        'fingerprint' => 'guest-dashboard-request',
+        'payload' => ['t' => 'request', 'user' => 'guest_abc123', 'status_code' => 200],
+        'created_at' => now(),
+    ]);
+
+    $project->records()->create([
+        'type' => 'exception',
+        'fingerprint' => 'guest-dashboard-exception',
+        'payload' => ['t' => 'exception', 'class' => 'RuntimeException', 'message' => 'boom', 'user' => 'guest_abc123'],
+        'created_at' => now(),
+    ]);
+
+    $dashboard = app(RecordService::class)->getDashboardStats($project, '24h');
+
+    expect($dashboard['active_users'])->toHaveCount(0)
+        ->and($dashboard['impacted_users'])->toHaveCount(0)
+        ->and($dashboard['auth_users_count'])->toBe(0)
+        ->and($dashboard['guest_users_count'])->toBe(1);
+});
