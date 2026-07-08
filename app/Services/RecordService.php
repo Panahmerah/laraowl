@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Project;
+use Carbon\Carbon;
 use Cron\CronExpression;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
@@ -334,7 +335,12 @@ class RecordService
                 ])
                 ->groupBy('class', 'message', 'fingerprint')
                 ->orderBy('last_seen', 'desc')
-                ->paginate(20)->withQueryString(),
+                ->paginate(20)->withQueryString()
+                ->through(function ($row) {
+                    $row->last_seen = $this->toUtcIso($row->last_seen);
+
+                    return $row;
+                }),
             'timeSeries' => $this->getDetailedTimeSeries($project, 'exception', $period, $from, $to),
             'overview' => [
                 'total' => (int) ($overview->total ?? 0),
@@ -723,13 +729,16 @@ class RecordService
             'user_id' => $user_id,
             'user_identifier' => $user_name, // legacy support
             'records' => $records,
-            'stats' => $project->records()->forPeriod($period, $from, $to)
+            'stats' => tap($project->records()->forPeriod($period, $from, $to)
                 ->whereRaw("{$userHash} = ?", [$hash])
                 ->select([
                     DB::raw('COUNT(*) as total'),
                     DB::raw('MIN(created_at) as first_seen'),
                     DB::raw('MAX(created_at) as last_seen'),
-                ])->first(),
+                ])->first(), function ($stats) {
+                    $stats->first_seen = $this->toUtcIso($stats->first_seen);
+                    $stats->last_seen = $this->toUtcIso($stats->last_seen);
+                }),
         ];
     }
 
@@ -978,6 +987,12 @@ class RecordService
 
     private function enrichUserRows(Project $project, iterable $rows): void
     {
+        foreach ($rows as $row) {
+            if (isset($row->last_seen)) {
+                $row->last_seen = $this->toUtcIso($row->last_seen);
+            }
+        }
+
         $ids = collect($rows)
             ->map(fn ($row) => (string) ($row->user_id ?? $row->user_identifier ?? $row->user_name ?? ''))
             ->filter(fn (string $id) => $id !== '' && $id !== 'Anonymous')
@@ -1123,6 +1138,16 @@ class RecordService
     private function isPgsql(): bool
     {
         return DB::connection()->getDriverName() === 'pgsql';
+    }
+
+    /**
+     * DB::raw() timestamps come back as naive strings with no timezone marker,
+     * so the frontend Date parser silently treats them as local time instead of UTC.
+     * Normalize to an explicit UTC ISO string here, matching Carbon's default toJSON() output.
+     */
+    private function toUtcIso(?string $value): ?string
+    {
+        return $value ? Carbon::parse($value, 'UTC')->toJSON() : null;
     }
 
     private function jsonPathSegments(string $path): array
