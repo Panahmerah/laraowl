@@ -11,9 +11,12 @@
     "skills": [
         "fortify-development",
         "laravel-best-practices",
+        "configuring-horizon",
+        "mcp-development",
         "wayfinder-development",
         "pest-testing",
         "inertia-react-development",
-        "tailwindcss-development"
+        "tailwindcss-development",
+        "echo-development"
     ]
 }

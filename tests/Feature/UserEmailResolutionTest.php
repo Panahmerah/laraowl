@@ -103,3 +103,44 @@ test('user history resolves real email from user detail records', function () {
         ->and($history['user_email'])->toBe('katherine@example.com')
         ->and((string) $history['user_id'])->toBe('789');
 });
+
+test('user stats, exception stats, and user history report last_seen as UTC ISO timestamps', function () {
+    $project = Project::factory()->create();
+
+    $project->records()->create([
+        'type' => 'request',
+        'fingerprint' => 'request-user-321',
+        'payload' => [
+            't' => 'request',
+            'user' => 321,
+            'status_code' => 200,
+            'duration' => 25,
+        ],
+        'created_at' => now(),
+    ]);
+
+    $project->records()->create([
+        'type' => 'exception',
+        'fingerprint' => 'exception-user-321',
+        'payload' => [
+            't' => 'exception',
+            'class' => 'RuntimeException',
+            'message' => 'boom',
+            'user' => 321,
+        ],
+        'created_at' => now(),
+    ]);
+
+    $userStats = app(RecordService::class)->getUserStats($project, '24h');
+    $userRow = $userStats['users']->items()[0];
+
+    $exceptionStats = app(RecordService::class)->getExceptionStats($project, '24h');
+    $exceptionRow = $exceptionStats['exceptions']->items()[0];
+
+    $history = app(RecordService::class)->getUserHistory($project, md5('321'), '24h');
+
+    expect($userRow->last_seen)->toMatch('/Z$/')
+        ->and($exceptionRow->last_seen)->toMatch('/Z$/')
+        ->and($history['stats']->first_seen)->toMatch('/Z$/')
+        ->and($history['stats']->last_seen)->toMatch('/Z$/');
+});

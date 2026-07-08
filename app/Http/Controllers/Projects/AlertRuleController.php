@@ -55,6 +55,8 @@ class AlertRuleController extends Controller
 
     public function update(Request $request, Team $current_team, Project $project, AlertRule $rule)
     {
+        $this->ensureBelongsToProject($project, $rule);
+
         $validated = $request->validate([
             'name' => 'required|string|max:255',
             'settings' => 'required|array',
@@ -75,6 +77,8 @@ class AlertRuleController extends Controller
 
     public function destroy(Team $current_team, Project $project, AlertRule $rule)
     {
+        $this->ensureBelongsToProject($project, $rule);
+
         $rule->delete();
 
         return back()->with('success', 'Alert rule deleted successfully.');

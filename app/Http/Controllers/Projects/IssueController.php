@@ -9,6 +9,7 @@ use App\Models\Team;
 use App\Services\IssueService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -42,6 +43,8 @@ class IssueController extends Controller
      */
     public function show(Team $current_team, Project $project, Issue $issue): Response
     {
+        $this->ensureBelongsToProject($project, $issue);
+
         $issue->load(['assignee', 'records' => fn ($q) => $q->latest()->limit(1), 'activities.user']);
 
         return Inertia::render('projects/issues/show', [
@@ -55,10 +58,14 @@ class IssueController extends Controller
      */
     public function update(Request $request, Team $current_team, Project $project, Issue $issue): RedirectResponse
     {
+        $this->ensureBelongsToProject($project, $issue);
+
         $validated = $request->validate([
             'status' => 'sometimes|string|in:open,resolved,ignored',
             'priority' => 'sometimes|string|in:none,low,medium,high,critical',
-            'assigned_to' => 'sometimes|nullable|exists:users,id',
+            'assigned_to' => ['sometimes', 'nullable', Rule::exists('users', 'id')->where(
+                fn ($query) => $query->whereIn('id', $current_team->members()->pluck('users.id'))
+            )],
         ]);
 
         $this->issueService->updateIssue($issue, $validated);
@@ -71,6 +78,8 @@ class IssueController extends Controller
      */
     public function comment(Request $request, Team $current_team, Project $project, Issue $issue): RedirectResponse
     {
+        $this->ensureBelongsToProject($project, $issue);
+
         $validated = $request->validate(['comment' => 'required|string']);
 
         $this->issueService->addComment($issue, $validated['comment']);

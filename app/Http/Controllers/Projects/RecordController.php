@@ -261,6 +261,8 @@ class RecordController extends Controller
 
     public function showOccurrence(Team $current_team, Project $project, Record $record): Response
     {
+        $this->ensureBelongsToProject($project, $record);
+
         $record->load('issue');
 
         return Inertia::render('projects/records/show', [
