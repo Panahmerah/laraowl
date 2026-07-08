@@ -197,8 +197,9 @@ class RecordController extends Controller
         $period = $request->query('period', '1h');
         $from = $request->query('from');
         $to = $request->query('to');
+        $status = $request->query('status', 'all');
 
-        return Inertia::render('projects/users/show', $this->recordService->getUserHistory($project, $hash, $period, $from, $to));
+        return Inertia::render('projects/users/show', $this->recordService->getUserHistory($project, $hash, $period, $from, $to, $status));
     }
 
     public function showSecurityDetails(Request $request, Team $current_team, Project $project, string $hash): Response
@@ -267,8 +268,13 @@ class RecordController extends Controller
 
         $record->load('issue');
 
+        $linkedException = $record->type === 'request'
+            ? $this->recordService->getLinkedExceptionRecord($project, $record)
+            : null;
+
         return Inertia::render('projects/records/show', [
             'record' => $record,
+            'linked_exception' => $linkedException,
         ]);
     }
 }

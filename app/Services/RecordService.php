@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Project;
+use App\Models\Record;
 use Carbon\Carbon;
 use Cron\CronExpression;
 use Illuminate\Pagination\LengthAwarePaginator;
@@ -699,16 +700,50 @@ class RecordService
     }
 
     /**
+     * Find the exception record that was thrown during the same HTTP
+     * lifecycle as a given request record. The client SDK stamps every
+     * record from the same request with a shared `trace_id`, which is the
+     * only reliable correlation key between a "request" and the
+     * "exception" it triggered.
+     */
+    public function getLinkedExceptionRecord(Project $project, Record $record): ?Record
+    {
+        $traceId = $record->payload['trace_id'] ?? null;
+
+        if (! $traceId) {
+            return null;
+        }
+
+        $traceIdColumn = $this->jsonText('trace_id');
+
+        return $project->records()
+            ->where('type', 'exception')
+            ->whereRaw("{$traceIdColumn} = ?", [$traceId])
+            ->with('issue')
+            ->latest()
+            ->first();
+    }
+
+    /**
      * Get specific user history with additional stats
      */
-    public function getUserHistory(Project $project, string $hash, ?string $period = null, ?string $from = null, ?string $to = null): array
+    public function getUserHistory(Project $project, string $hash, ?string $period = null, ?string $from = null, ?string $to = null, string $status = 'all'): array
     {
         $userHash = "MD5(COALESCE({$this->jsonText('user')}, 'Anonymous'))";
         $statusCode = $this->jsonNumeric('status_code');
+        $status = in_array($status, ['all', 'error', 'ok'], true) ? $status : 'all';
 
-        $records = $project->records()
+        $recordsQuery = $project->records()
             ->whereRaw("{$userHash} = ?", [$hash])
-            ->forPeriod($period, $from, $to)
+            ->forPeriod($period, $from, $to);
+
+        if ($status === 'error') {
+            $recordsQuery->whereRaw("(type = 'exception' OR {$statusCode} >= 400)");
+        } elseif ($status === 'ok') {
+            $recordsQuery->whereRaw("(type != 'exception' AND ({$statusCode} < 400 OR {$statusCode} IS NULL))");
+        }
+
+        $records = $recordsQuery
             ->latest()
             ->paginate(50)
             ->withQueryString();
@@ -738,6 +773,7 @@ class RecordService
             'user_id' => $user_id,
             'user_identifier' => $user_name, // legacy support
             'records' => $records,
+            'status' => $status,
             'stats' => tap($project->records()->forPeriod($period, $from, $to)
                 ->whereRaw("{$userHash} = ?", [$hash])
                 ->select([

@@ -1,7 +1,8 @@
-import { Head, Link, usePage } from '@inertiajs/react';
+import { Head, Link, router, usePage } from '@inertiajs/react';
 import { User, Search, ArrowUpRight, Activity } from 'lucide-react';
 import { Pagination } from '@/components/pagination';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import {
     Table,
@@ -19,6 +20,12 @@ import {
 } from '@/lib/utils';
 import { show as showRecord } from '@/routes/records';
 
+const statusFilters = [
+    { label: 'All', value: 'all' },
+    { label: 'Errors', value: 'error' },
+    { label: 'OK', value: 'ok' },
+];
+
 export default function UserShow({
     user_name,
     user_email,
@@ -26,6 +33,7 @@ export default function UserShow({
     user_identifier,
     records,
     stats,
+    status = 'all',
 }: {
     user_name?: string;
     user_email?: string;
@@ -33,6 +41,7 @@ export default function UserShow({
     user_identifier: string;
     records: any;
     stats: any;
+    status?: string;
 }) {
     const { props }: any = usePage();
     const teamSlug = props.current_team?.slug || props.currentTeam?.slug;
@@ -48,6 +57,18 @@ export default function UserShow({
             },
             { mergeQuery: {} },
         );
+
+    const handleStatusChange = (value: string) => {
+        const searchParams = new URLSearchParams(window.location.search);
+        searchParams.set('status', value);
+        searchParams.delete('page');
+
+        router.visit(window.location.pathname + '?' + searchParams.toString(), {
+            preserveState: true,
+            preserveScroll: true,
+            replace: true,
+        });
+    };
 
     return (
         <>
@@ -165,12 +186,33 @@ export default function UserShow({
                                 Requests
                             </span>
                         </div>
-                        <div className="relative w-64">
-                            <Search className="absolute top-2.5 left-2.5 h-4 w-4 text-muted-foreground" />
-                            <input
-                                className="w-full rounded-md border border-border bg-muted py-1.5 pl-8 text-sm focus:ring-1 focus:ring-blue-500 focus:outline-none"
-                                placeholder="Search activity"
-                            />
+                        <div className="flex items-center gap-2">
+                            <div className="flex rounded-md border border-border bg-muted p-1">
+                                {statusFilters.map((filter) => (
+                                    <Button
+                                        key={filter.value}
+                                        variant={
+                                            status === filter.value
+                                                ? 'secondary'
+                                                : 'ghost'
+                                        }
+                                        size="sm"
+                                        className={`h-7 px-3 text-[10px] font-bold tracking-tight uppercase ${status === filter.value ? 'bg-primary text-primary-foreground shadow-lg hover:bg-primary/90' : 'text-muted-foreground hover:text-foreground'}`}
+                                        onClick={() =>
+                                            handleStatusChange(filter.value)
+                                        }
+                                    >
+                                        {filter.label}
+                                    </Button>
+                                ))}
+                            </div>
+                            <div className="relative w-64">
+                                <Search className="absolute top-2.5 left-2.5 h-4 w-4 text-muted-foreground" />
+                                <input
+                                    className="w-full rounded-md border border-border bg-muted py-1.5 pl-8 text-sm focus:ring-1 focus:ring-blue-500 focus:outline-none"
+                                    placeholder="Search activity"
+                                />
+                            </div>
                         </div>
                     </div>
 
