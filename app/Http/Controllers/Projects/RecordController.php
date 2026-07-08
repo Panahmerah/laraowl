@@ -268,8 +268,13 @@ class RecordController extends Controller
 
         $record->load('issue');
 
+        $linkedException = $record->type === 'request'
+            ? $this->recordService->getLinkedExceptionRecord($project, $record)
+            : null;
+
         return Inertia::render('projects/records/show', [
             'record' => $record,
+            'linked_exception' => $linkedException,
         ]);
     }
 }

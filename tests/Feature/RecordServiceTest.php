@@ -42,3 +42,58 @@ it('handles non numeric outgoing request status values without SQL errors', func
 
     expect($stats['hosts']->total())->toBe(2);
 });
+
+it('links a failed request to the exception thrown during the same trace', function () {
+    $project = Project::factory()->create();
+
+    $request = Record::create([
+        'project_id' => $project->id,
+        'type' => 'request',
+        'fingerprint' => 'failed-request',
+        'payload' => [
+            'route_path' => '/checkout',
+            'status_code' => 500,
+            'trace_id' => 'trace-abc-123',
+        ],
+        'created_at' => now(),
+    ]);
+
+    $exception = Record::create([
+        'project_id' => $project->id,
+        'type' => 'exception',
+        'fingerprint' => 'checkout-error',
+        'payload' => [
+            'class' => 'RuntimeException',
+            'message' => 'Payment gateway timed out',
+            'file' => 'app/Services/PaymentService.php',
+            'line' => 42,
+            'trace_id' => 'trace-abc-123',
+        ],
+        'created_at' => now(),
+    ]);
+
+    $linked = app(RecordService::class)->getLinkedExceptionRecord($project, $request);
+
+    expect($linked)->not->toBeNull()
+        ->and($linked->id)->toBe($exception->id);
+});
+
+it('returns null when a request has no matching trace_id exception', function () {
+    $project = Project::factory()->create();
+
+    $request = Record::create([
+        'project_id' => $project->id,
+        'type' => 'request',
+        'fingerprint' => 'no-link-request',
+        'payload' => [
+            'route_path' => '/health',
+            'status_code' => 200,
+            'trace_id' => 'trace-unmatched',
+        ],
+        'created_at' => now(),
+    ]);
+
+    $linked = app(RecordService::class)->getLinkedExceptionRecord($project, $request);
+
+    expect($linked)->toBeNull();
+});

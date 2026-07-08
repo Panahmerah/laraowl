@@ -22,10 +22,12 @@ export default function RecordShow({
     record,
     relatedRecords = [],
     highlight_record_id,
+    linked_exception,
 }: {
     record: any;
     relatedRecords?: any[];
     highlight_record_id?: number;
+    linked_exception?: any;
 }) {
     usePage();
     const payload = record.payload || {};
@@ -148,7 +150,14 @@ export default function RecordShow({
     const isCommand = ['command', 'scheduled-task'].includes(record.type);
     const isQuery = record.type === 'query';
     const isException = record.type === 'exception';
-    const stackTrace = parseTraceFrames(payload.trace);
+    const isFailedRequest = isRequest && Number(payload.status_code) >= 400;
+    const errorPayload = isException
+        ? payload
+        : (linked_exception?.payload ?? null);
+    const errorIssue = isException
+        ? record.issue
+        : (linked_exception?.issue ?? null);
+    const stackTrace = parseTraceFrames(errorPayload?.trace);
 
     const title = isException
         ? payload.class || 'Exception'
@@ -436,8 +445,88 @@ export default function RecordShow({
                     </div>
                 </Card>
 
+                {/* Error Summary Card (failed requests only — exceptions already show this in the header) */}
+                {isFailedRequest && (
+                    <Card className="border-red-500/20 bg-red-500/5 p-6 shadow-2xl">
+                        <div className="mb-4 flex items-center gap-2">
+                            <AlertTriangle className="h-4 w-4 text-red-500" />
+                            <h3 className="text-xs font-bold text-red-500 uppercase">
+                                Error
+                            </h3>
+                        </div>
+
+                        {errorPayload ? (
+                            <div className="space-y-3">
+                                <div className="flex items-center justify-between border-b border-red-500/10 py-2">
+                                    <span className="text-[10px] font-bold tracking-widest text-muted-foreground uppercase">
+                                        Exception
+                                    </span>
+                                    <span className="font-mono text-sm text-red-400">
+                                        {errorPayload.class || 'Unknown'}
+                                    </span>
+                                </div>
+                                <div className="border-b border-red-500/10 py-2">
+                                    <span className="text-[10px] font-bold tracking-widest text-muted-foreground uppercase">
+                                        Message
+                                    </span>
+                                    <p className="mt-1 font-mono text-sm break-all text-foreground/90">
+                                        {errorPayload.message ||
+                                            'No message captured'}
+                                    </p>
+                                </div>
+                                <div className="flex items-center justify-between border-b border-red-500/10 py-2">
+                                    <span className="text-[10px] font-bold tracking-widest text-muted-foreground uppercase">
+                                        Location
+                                    </span>
+                                    <span className="font-mono text-xs text-foreground/90">
+                                        {errorPayload.file
+                                            ? `${errorPayload.file}:${errorPayload.line}`
+                                            : 'Unknown'}
+                                    </span>
+                                </div>
+                                {errorIssue && (
+                                    <div className="flex items-center justify-between py-2">
+                                        <span className="text-[10px] font-bold tracking-widest text-muted-foreground uppercase">
+                                            Issue
+                                        </span>
+                                        <div className="flex items-center gap-2">
+                                            <Badge
+                                                className={
+                                                    errorIssue.status ===
+                                                    'resolved'
+                                                        ? 'bg-emerald-500/10 text-emerald-500'
+                                                        : 'bg-red-500/10 text-red-500'
+                                                }
+                                            >
+                                                {errorIssue.status}
+                                            </Badge>
+                                            <span className="font-mono text-xs text-muted-foreground">
+                                                {errorIssue.occurrences_count}{' '}
+                                                occurrences
+                                            </span>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        ) : (
+                            <div className="space-y-2">
+                                <p className="text-xs text-foreground/90">
+                                    {payload.exception_preview ||
+                                        'No exception details captured for this request.'}
+                                </p>
+                                {payload.exceptions ? (
+                                    <p className="text-[10px] text-muted-foreground">
+                                        {payload.exceptions} exception(s)
+                                        recorded during this request.
+                                    </p>
+                                ) : null}
+                            </div>
+                        )}
+                    </Card>
+                )}
+
                 {/* Stack Trace Card */}
-                {isException && (
+                {errorPayload && (
                     <Card className="border-border bg-card p-8 shadow-2xl">
                         <div className="mb-6 flex items-center gap-2">
                             <FileCode className="h-4 w-4 text-red-500" />

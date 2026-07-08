@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Project;
+use App\Models\Record;
 use Carbon\Carbon;
 use Cron\CronExpression;
 use Illuminate\Pagination\LengthAwarePaginator;
@@ -696,6 +697,31 @@ class RecordService
                 return $record;
             })
             ->withQueryString();
+    }
+
+    /**
+     * Find the exception record that was thrown during the same HTTP
+     * lifecycle as a given request record. The client SDK stamps every
+     * record from the same request with a shared `trace_id`, which is the
+     * only reliable correlation key between a "request" and the
+     * "exception" it triggered.
+     */
+    public function getLinkedExceptionRecord(Project $project, Record $record): ?Record
+    {
+        $traceId = $record->payload['trace_id'] ?? null;
+
+        if (! $traceId) {
+            return null;
+        }
+
+        $traceIdColumn = $this->jsonText('trace_id');
+
+        return $project->records()
+            ->where('type', 'exception')
+            ->whereRaw("{$traceIdColumn} = ?", [$traceId])
+            ->with('issue')
+            ->latest()
+            ->first();
     }
 
     /**
