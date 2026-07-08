@@ -1,5 +1,6 @@
 import { Head, Link, usePage } from '@inertiajs/react';
 import { User, Search, ArrowUpRight, Activity } from 'lucide-react';
+import { Pagination } from '@/components/pagination';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import {
@@ -224,29 +225,46 @@ export default function UserShow({
                                                           .route_path ||
                                                       record.payload.url ||
                                                       record.payload.path
-                                                    : formatValue(
-                                                          record.payload.name ||
-                                                              record.payload
-                                                                  .command ||
-                                                              record.payload
-                                                                  .job ||
-                                                              'No Identifier',
-                                                      )}
+                                                    : record.type ===
+                                                        'exception'
+                                                      ? formatValue(
+                                                            record.payload
+                                                                .class ||
+                                                                record.payload
+                                                                    .message ||
+                                                                'No Identifier',
+                                                        )
+                                                      : formatValue(
+                                                            record.payload
+                                                                .name ||
+                                                                record.payload
+                                                                    .command ||
+                                                                record.payload
+                                                                    .job ||
+                                                                'No Identifier',
+                                                        )}
                                             </span>
                                         </TableCell>
                                         <TableCell>
-                                            <Badge
-                                                className={`text-[10px] font-bold ${(record.payload.status_code || record.payload.exit_code) >= 400 || record.payload.status === 'failed' ? 'bg-red-500/10 text-red-500' : 'bg-emerald-500/10 text-emerald-500'} border-none`}
-                                            >
-                                                {record.payload.status_code ||
-                                                    record.payload.status ||
-                                                    (record.payload
-                                                        .exit_code === 0
-                                                        ? 'SUCCESS'
-                                                        : record.payload
-                                                              .exit_code) ||
-                                                    'OK'}
-                                            </Badge>
+                                            {record.type === 'exception' ? (
+                                                <Badge className="border-none bg-red-500/10 text-[10px] font-bold text-red-500">
+                                                    ERROR
+                                                </Badge>
+                                            ) : (
+                                                <Badge
+                                                    className={`text-[10px] font-bold ${(record.payload.status_code || record.payload.exit_code) >= 400 || record.payload.status === 'failed' ? 'bg-red-500/10 text-red-500' : 'bg-emerald-500/10 text-emerald-500'} border-none`}
+                                                >
+                                                    {record.payload
+                                                        .status_code ||
+                                                        record.payload.status ||
+                                                        (record.payload
+                                                            .exit_code === 0
+                                                            ? 'SUCCESS'
+                                                            : record.payload
+                                                                  .exit_code) ||
+                                                        'OK'}
+                                                </Badge>
+                                            )}
                                         </TableCell>
                                         <TableCell className="text-right font-mono text-xs text-foreground/90">
                                             {record.payload.duration
@@ -266,6 +284,7 @@ export default function UserShow({
                                 ))}
                             </TableBody>
                         </Table>
+                        <Pagination links={records.links} meta={records} />
                     </div>
                 </div>
             </div>
